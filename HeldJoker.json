@@ -1,0 +1,16 @@
+{
+	"id": "HeldJoker",
+	"name": "Held Joker",
+	"display_name": "Held",
+	"author": ["lukem"],
+	"description": "Hold one joker from the shop for later. Buy it back into your joker slots for free at any time.",
+	"prefix": "hj",
+	"main_file": "main.lua",
+	"priority": 0,
+	"badge_colour": "4A6FCC",
+	"badge_text_colour": "FFFFFF",
+	"version": "0.1.0",
+	"dependencies": [
+		"Lovely (>=0.6)"
+	]
+}
