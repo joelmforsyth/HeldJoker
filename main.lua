@@ -20,14 +20,32 @@ end
 
 local function save_held_data(card)
     G.GAME.hj_held_data = {
-        center_key = card.config.center.key,
-        edition    = edition_to_str(card),
-        cost       = card.cost,
-        sell_cost  = card.sell_cost,
-        eternal    = card.ability.eternal    or nil,
-        perishable = card.ability.perishable or nil,
-        rental     = card.ability.rental     or nil,
+        center_key    = card.config.center.key,
+        edition       = edition_to_str(card),
+        cost          = card.cost,
+        sell_cost     = card.sell_cost,
+        eternal       = card.ability.eternal       or nil,
+        perishable    = card.ability.perishable     or nil,
+        perish_tally  = card.ability.perish_tally   or nil,
+        rental        = card.ability.rental         or nil,
+        orig_w        = card.T.w,
+        orig_h        = card.T.h,
     }
+end
+
+local HJ_CARD_SPRITES = { center = true, front = true, back = true, shadow = true }
+
+local function hj_scale_card(card, target_w, target_h)
+    local sx = target_w / card.T.w
+    local sy = target_h / card.T.h
+    card.T.w = target_w
+    card.T.h = target_h
+    for k, child in pairs(card.children) do
+        if not HJ_CARD_SPRITES[k] and child.T and child.T.w and child.T.h then
+            child.T.w = child.T.w * sx
+            child.T.h = child.T.h * sy
+        end
+    end
 end
 
 -- ─── Shop UI ─────────────────────────────────────────────────────────────────
@@ -35,76 +53,88 @@ end
 local orig_shop_uidef = G.UIDEF.shop
 G.UIDEF.shop = function()
     local s = HJ.SCALE
+    local has_card = G.hj_held_area and G.hj_held_area.cards
+                     and #G.hj_held_area.cards > 0
 
-    G.hj_held_area = CardArea(
-        G.hand.T.x, G.hand.T.y,
-        G.CARD_W * s * 1.1,
-        G.CARD_H * s * 1.05,
-        { card_limit = 1, type = 'shop', highlight_limit = 1,
-          card_w = G.CARD_W * s,
-          align_buttons = true, no_card_count = true }
-    )
+    if has_card and not G.GAME.hj_held_data then
+        if G.hj_held_box then
+            G.hj_held_box:remove()
+            G.hj_held_box = nil
+        end
+        G.hj_held_area = nil
+        has_card = false
+    end
 
-    if G.GAME.hj_held_data then
-        local data   = G.GAME.hj_held_data
-        local center = G.P_CENTERS[data.center_key]
-        if center then
-            local card = Card(
-                G.hj_held_area.T.x + G.hj_held_area.T.w / 2,
-                G.hj_held_area.T.y,
-                G.CARD_W * s, G.CARD_H * s,
-                G.P_CARDS.empty, center,
-                { bypass_discovery_center = true, bypass_discovery_ui = true }
-            )
-            if data.edition then
-                card:set_edition({ [data.edition] = true }, true)
+    if not has_card then
+        G.hj_held_area = CardArea(
+            G.hand.T.x, G.hand.T.y,
+            G.CARD_W * s * 1.1,
+            G.CARD_H * s * 1.05,
+            { card_limit = 1, type = 'shop', highlight_limit = 1,
+              card_w = G.CARD_W * s,
+              align_buttons = true, no_card_count = true }
+        )
+
+        if G.GAME.hj_held_data then
+            local data   = G.GAME.hj_held_data
+            local center = G.P_CENTERS[data.center_key]
+            if center then
+                local orig_w = data.orig_w or G.CARD_W
+                local orig_h = data.orig_h or G.CARD_H
+                local card = Card(
+                    G.hj_held_area.T.x + G.hj_held_area.T.w / 2,
+                    G.hj_held_area.T.y,
+                    orig_w * s, orig_h * s,
+                    G.P_CARDS.empty, center,
+                    { bypass_discovery_center = true, bypass_discovery_ui = true }
+                )
+                card.hj_orig_w = orig_w
+                card.hj_orig_h = orig_h
+                if data.edition then
+                    card:set_edition({ [data.edition] = true }, true)
+                end
+                card.ability.eternal      = data.eternal
+                card.ability.perishable   = data.perishable
+                card.ability.perish_tally = data.perish_tally
+                card.ability.rental       = data.rental
+                card.cost      = data.cost
+                card.sell_cost = data.sell_cost
+                card:start_materialize()
+                G.hj_held_area:emplace(card)
+                HJ.create_held_card_ui(card)
+            else
+                G.GAME.hj_held_data = nil
             end
-            card.ability.eternal    = data.eternal
-            card.ability.perishable = data.perishable
-            card.ability.rental     = data.rental
-            card.cost      = data.cost
-            card.sell_cost = data.sell_cost
-            card:start_materialize()
-            G.hj_held_area:emplace(card)
-            HJ.create_held_card_ui(card)
-        else
-            G.GAME.hj_held_data = nil
         end
     end
 
     local t = orig_shop_uidef()
 
-    -- Create a standalone floating UIBox anchored to the consumable area
-    -- so it doesn't affect the shop layout at all.
-    if G.hj_held_box then
-        G.hj_held_box:remove()
-        G.hj_held_box = nil
+    if not G.hj_held_box then
+        G.hj_held_box = UIBox {
+            definition = {
+                n = G.UIT.ROOT,
+                config = { align = "cm", colour = G.C.L_BLACK, r = 0.1,
+                           padding = 0.08, emboss = 0.05 },
+                nodes = {
+                    { n = G.UIT.R, config = { align = "cm", padding = 0.03 }, nodes = {
+                        { n = G.UIT.T, config = { text = "Held", scale = 0.28,
+                                                  colour = G.C.WHITE, shadow = true } }
+                    }},
+                    { n = G.UIT.R, config = { align = "cm", padding = 0.03 }, nodes = {
+                        { n = G.UIT.O, config = { object = G.hj_held_area } }
+                    }}
+                }
+            },
+            config = {
+                align = 'cr',
+                offset = { x = 0.3, y = 0 },
+                major = G.consumeables,
+                bond = 'Weak',
+            }
+        }
     end
 
-    G.hj_held_box = UIBox {
-        definition = {
-            n = G.UIT.ROOT,
-            config = { align = "cm", colour = G.C.L_BLACK, r = 0.1,
-                       padding = 0.08, emboss = 0.05 },
-            nodes = {
-                { n = G.UIT.R, config = { align = "cm", padding = 0.03 }, nodes = {
-                    { n = G.UIT.T, config = { text = "Held", scale = 0.28,
-                                              colour = G.C.WHITE, shadow = true } }
-                }},
-                { n = G.UIT.R, config = { align = "cm", padding = 0.03 }, nodes = {
-                    { n = G.UIT.O, config = { object = G.hj_held_area } }
-                }}
-            }
-        },
-        config = {
-            align = 'cr',
-            offset = { x = 0.3, y = 0 },
-            major = G.consumeables,
-            bond = 'Weak',
-        }
-    }
-
-    -- Auto-remove the floating box when the shop closes.
     G.E_MANAGER:add_event(Event({
         trigger   = 'after',
         delay     = 0.5,
@@ -114,6 +144,7 @@ G.UIDEF.shop = function()
             if G.hj_held_box and not G.shop then
                 G.hj_held_box:remove()
                 G.hj_held_box = nil
+                G.hj_held_area = nil
                 return true
             end
             return G.hj_held_box == nil
@@ -126,7 +157,6 @@ end
 -- ─── DrawSteps ───────────────────────────────────────────────────────────────
 
 SMODS.draw_ignore_keys['hj_hold_button'] = true
-SMODS.draw_ignore_keys['hj_sell_price']  = true
 SMODS.draw_ignore_keys['hj_add_button']  = true
 SMODS.draw_ignore_keys['hj_sell_button'] = true
 
@@ -142,16 +172,6 @@ SMODS.DrawStep {
                 self.children.hj_hold_button:draw()
             else
                 self.children.hj_hold_button.states.visible = false
-            end
-        end
-
-        if self.children.hj_sell_price then
-            if self.highlighted and G.hj_held_area
-               and self.area == G.hj_held_area then
-                self.children.hj_sell_price.states.visible = true
-                self.children.hj_sell_price:draw()
-            else
-                self.children.hj_sell_price.states.visible = false
             end
         end
 
@@ -173,6 +193,7 @@ SMODS.DrawStep {
         end
     end,
 }
+
 
 -- ─── Hold button injection ────────────────────────────────────────────────────
 
@@ -248,30 +269,6 @@ function HJ.create_held_card_ui(card)
         func = function()
             if card.removed then return true end
 
-            card.children.hj_sell_price = UIBox {
-                definition = {
-                    n = G.UIT.ROOT,
-                    config = { minw = 0.6 * s, align = 'tm',
-                               colour = darken(G.C.BLACK, 0.2),
-                               shadow = true, r = 0.05, padding = 0.03, minh = 0.6 * s },
-                    nodes = {{
-                        n = G.UIT.R,
-                        config = { align = "cm", colour = lighten(G.C.BLACK, 0.1),
-                                   r = 0.1, minw = 0.6 * s, minh = 0.3 * s,
-                                   emboss = 0.05, padding = 0.02 },
-                        nodes = {{ n = G.UIT.O, config = { object = DynaText({
-                            string   = {{ prefix = localize('$'),
-                                          ref_table = card, ref_value = 'sell_cost' }},
-                            colours  = { G.C.MONEY },
-                            shadow = true, silent = true,
-                            bump   = true, pop_in = 0, scale = 0.35,
-                        })}}}
-                    }},
-                },
-                config = { align = 'tm', offset = { x = 0, y = 0.38 * s },
-                           major = card, bond = 'Weak', parent = card },
-            }
-
             card.children.hj_add_button = UIBox {
                 definition = {
                     n = G.UIT.ROOT,
@@ -279,7 +276,7 @@ function HJ.create_held_card_ui(card)
                         ref_table = card,
                         minw = 0.7, maxw = 0.8, padding = 0.05,
                         align  = 'bm',
-                        colour = { 0.2, 0.65, 0.2, 1 },
+                        colour = G.C.ORANGE,
                         shadow = true, r = 0.08, minh = 0.5,
                         func   = 'hj_can_add',
                         button = 'hj_add_to_jokers',
@@ -300,17 +297,28 @@ function HJ.create_held_card_ui(card)
                         n = G.UIT.ROOT,
                         config = {
                             ref_table = card,
-                            minw = 0.7, maxw = 0.8, padding = 0.05,
+                            minw = 0.7, padding = 0.05,
                             align  = 'cl',
-                            colour = G.C.RED,
-                            shadow = true, r = 0.08, minh = 0.5,
+                            colour = G.C.GREEN,
+                            shadow = true, r = 0.08,
                             func   = 'hj_can_sell',
                             button = 'hj_sell_held',
                             hover  = true,
                         },
                         nodes = {
-                            { n = G.UIT.T, config = { text = 'Sell',
-                                                       colour = G.C.WHITE, scale = 0.35 } }
+                            { n = G.UIT.R, config = { align = 'cm' }, nodes = {
+                                { n = G.UIT.T, config = { text = 'SELL',
+                                                           colour = G.C.WHITE, scale = 0.35 } },
+                            }},
+                            { n = G.UIT.R, config = { align = 'cm' }, nodes = {
+                                { n = G.UIT.O, config = { object = DynaText({
+                                    string   = {{ prefix = localize('$'),
+                                                  ref_table = card, ref_value = 'sell_cost' }},
+                                    colours  = { G.C.WHITE },
+                                    shadow = true, silent = true,
+                                    bump   = true, pop_in = 0, scale = 0.35,
+                                })}},
+                            }},
                         },
                     },
                     config = { align = 'cl', offset = { x = 0.3 * s, y = 0 },
@@ -324,6 +332,9 @@ end
 
 -- ─── Button condition checks ──────────────────────────────────────────────────
 
+local HJ_GREY     = { 0.45, 0.45, 0.45, 1 }
+local HJ_HOLD_COL = { 0.3, 0.5, 0.9, 1 }
+
 G.FUNCS.hj_can_hold = function(e)
     local card = e.config.ref_table
     local slot_free = G.hj_held_area and G.hj_held_area.cards
@@ -333,8 +344,10 @@ G.FUNCS.hj_can_hold = function(e)
     local can_afford = from_pack or (card and G.GAME.dollars >= card.cost)
     if slot_free and can_afford then
         e.config.button = 'hj_hold_joker'
+        e.config.colour = HJ_HOLD_COL
     else
         e.config.button = nil
+        e.config.colour = HJ_GREY
     end
 end
 
@@ -343,8 +356,10 @@ G.FUNCS.hj_can_add = function(e)
     local extra = (card and card.edition and card.edition.negative) and 1 or 0
     if G.jokers and #G.jokers.cards < G.jokers.config.card_limit + extra then
         e.config.button = 'hj_add_to_jokers'
+        e.config.colour = G.C.ORANGE
     else
         e.config.button = nil
+        e.config.colour = HJ_GREY
     end
 end
 
@@ -352,8 +367,10 @@ G.FUNCS.hj_can_sell = function(e)
     local card = e.config.ref_table
     if card and not card.ability.eternal then
         e.config.button = 'hj_sell_held'
+        e.config.colour = G.C.GREEN
     else
         e.config.button = nil
+        e.config.colour = HJ_GREY
     end
 end
 
@@ -371,7 +388,7 @@ local function hj_clean_shop_children(card)
 end
 
 local function hj_clean_held_children(card)
-    for _, k in ipairs { 'hj_sell_price', 'hj_add_button', 'hj_sell_button' } do
+    for _, k in ipairs { 'hj_add_button', 'hj_sell_button' } do
         if card.children[k] then
             card.children[k]:remove()
             card.children[k] = nil
@@ -408,9 +425,10 @@ G.FUNCS.hj_hold_joker = function(e)
             play_sound('card1')
 
             save_held_data(c1)
+            c1.hj_orig_w = c1.T.w
+            c1.hj_orig_h = c1.T.h
             G.hj_held_area:emplace(c1)
-            c1.T.w = G.CARD_W * HJ.SCALE
-            c1.T.h = G.CARD_H * HJ.SCALE
+            hj_scale_card(c1, c1.T.w * HJ.SCALE, c1.T.h * HJ.SCALE)
             HJ.create_held_card_ui(c1)
 
             if from_pack and G.FUNCS.skip_booster then
@@ -442,9 +460,11 @@ G.FUNCS.hj_add_to_jokers = function(e)
             hj_clean_held_children(c1)
             G.hj_held_area:remove_card(c1)
             G.GAME.hj_held_data = nil
-            c1.T.w = G.CARD_W
-            c1.T.h = G.CARD_H
+            hj_scale_card(c1, c1.hj_orig_w or G.CARD_W, c1.hj_orig_h or G.CARD_H)
+            c1.hj_orig_w = nil
+            c1.hj_orig_h = nil
             G.jokers:emplace(c1)
+            c1:add_to_deck()
 
             G.E_MANAGER:add_event(Event({ func = function()
                 c1:calculate_joker({ buying_card = true, card = c1 })
@@ -482,9 +502,11 @@ G.FUNCS.hj_sell_held = function(e)
         delay   = 0.1,
         func    = function()
             hj_clean_held_children(c1)
+            G.hj_held_area:remove_card(c1)
             G.GAME.hj_held_data = nil
-            c1.T.w = G.CARD_W
-            c1.T.h = G.CARD_H
+            hj_scale_card(c1, c1.hj_orig_w or G.CARD_W, c1.hj_orig_h or G.CARD_H)
+            c1.hj_orig_w = nil
+            c1.hj_orig_h = nil
             c1:sell_card()
             return true
         end,
